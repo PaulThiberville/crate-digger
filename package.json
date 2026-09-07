@@ -1,0 +1,30 @@
+{
+  "name": "crate-digger",
+  "version": "0.1.0",
+  "description": "FREEBASS — SoundCloud official free downloads only, from a curator's followings graph",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "start": "tsx src/index.tsx",
+    "logout": "tsx src/index.tsx logout",
+    "typecheck": "tsc --noEmit",
+    "test": "node --import tsx --test \"tests/**/*.test.ts\"",
+    "mock": "node scripts/mock-soundcloud.mjs",
+    "build": "bun scripts/build.mjs"
+  },
+  "dependencies": {
+    "ink": "^7.1.1",
+    "ink-text-input": "^6.0.0",
+    "react": "^19.2.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.0",
+    "@types/react": "^19.2.0",
+    "tsx": "^4.20.0",
+    "typescript": "^5.9.0"
+  }
+}
