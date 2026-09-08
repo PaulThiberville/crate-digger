@@ -76,7 +76,9 @@ export class Runtime {
     if (existing) await existing.open(signin).catch(() => undefined); // already running: show the login page in a new tab
     this.onStatus('waiting for you to log in in the browser window…');
     const token = await waitForLogin(browser, { timeoutMs: LOGIN_TIMEOUT_MS, signal });
-    return token ? this.adoptToken(token) : null;
+    const me = token ? await this.adoptToken(token) : null;
+    await this.releaseBrowser();
+    return me;
   }
 
   /**
@@ -99,7 +101,18 @@ export class Runtime {
       return null;
     }
     const token = await (await this.ensureBrowser()).cookie('oauth_token');
-    return token ? this.adoptToken(token) : null;
+    const me = token ? await this.adoptToken(token) : null;
+    await this.releaseBrowser();
+    return me;
+  }
+
+  /** The window is only needed to log in and for the anti-bot fallback: never keep it open longer. */
+  private async releaseBrowser(): Promise<void> {
+    const browser = this.browser;
+    if (!browser) return;
+    this.browser = null;
+    this.api.useBrowser(null);
+    await browser.close();
   }
 
   private async adoptToken(token: string): Promise<ScUser | null> {
@@ -117,7 +130,7 @@ export class Runtime {
     this.launching ??= (async () => {
       const exe = findBrowser();
       if (!exe) throw new NoBrowserError();
-      this.onStatus('opening a browser window (your SoundCloud session — keep it open)…');
+      this.onStatus('opening a browser window — separate FREEBASS profile, your own browser profile is untouched');
       const browser = await Browser.launch(exe, url);
       this.browser = browser;
       this.api?.useBrowser(browser);

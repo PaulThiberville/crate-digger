@@ -114,7 +114,7 @@ function api(req, res) {
     res.writeHead(204);
     return res.end();
   }
-  const fromBrowser = 'sec-fetch-mode' in req.headers;
+  const fromBrowser = 'sec-ch-ua' in req.headers; // client hints: only real Chromium sends them
   console.log('api ', req.method, url.pathname, fromBrowser ? '(browser)' : '', req.headers.authorization ? '(auth)' : '');
 
   const cdn = /^\/cdn\/(\d+)$/.exec(url.pathname);

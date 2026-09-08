@@ -8,6 +8,9 @@ import { debug } from './debug.js';
 import type { HttpResponse } from './http.js';
 import { sleep } from './util.js';
 
+// Node 22+ and Bun ship a global WebSocket; older Node falls back to the `ws` package.
+const WS: typeof WebSocket = (globalThis.WebSocket ?? (await import('ws')).default) as unknown as typeof WebSocket;
+
 const MAC_APPS = [
   'Google Chrome.app/Contents/MacOS/Google Chrome',
   'Microsoft Edge.app/Contents/MacOS/Microsoft Edge',
@@ -128,28 +131,30 @@ export class Browser {
     child.once('exit', () => (exited = true));
     child.once('error', () => (exited = true));
 
-    const deadline = Date.now() + 30_000;
-    let endpoint: string | null = null;
-    while (!endpoint) {
-      endpoint = await readEndpoint(portFile);
-      if (endpoint) break;
-      if (exited) {
-        throw new Error(
-          'The browser exited before it could be controlled. A FREEBASS browser window is probably still open from a previous run: quit it (Cmd+Q on macOS) and retry.',
-        );
+    try {
+      const deadline = Date.now() + 30_000;
+      let endpoint: string | null = null;
+      while (!endpoint) {
+        endpoint = await readEndpoint(portFile);
+        if (endpoint) break;
+        if (exited) {
+          throw new Error(
+            'The browser exited before it could be controlled. A FREEBASS browser window is probably still open from a previous run: quit it (Cmd+Q on macOS) and retry.',
+          );
+        }
+        if (Date.now() > deadline) throw new Error('Timed out waiting for the browser to start.');
+        await sleep(100);
       }
-      if (Date.now() > deadline) {
-        child.kill();
-        throw new Error('Timed out waiting for the browser to start.');
-      }
-      await sleep(100);
+      debug('browser launched', exe);
+      return new Browser(child, await connect(endpoint));
+    } catch (err) {
+      await stopProcess(child); // never leave a window we cannot control behind
+      throw err;
     }
-    debug('browser launched', exe);
-    return new Browser(child, await connect(endpoint));
   }
 
   send<T = any>(method: string, params: Record<string, unknown> = {}, sessionId?: string): Promise<T> {
-    if (this.down || this.ws.readyState !== WebSocket.OPEN) return Promise.reject(new Error('Browser session closed.'));
+    if (this.down || this.ws.readyState !== WS.OPEN) return Promise.reject(new Error('Browser session closed.'));
     const id = this.nextId++;
     return new Promise<T>((resolve, reject) => {
       this.pending.set(id, { resolve, reject });
@@ -309,7 +314,7 @@ async function liveEndpoint(portFile: string): Promise<string | null> {
 }
 
 async function connect(endpoint: string): Promise<WebSocket> {
-  const ws = new WebSocket(endpoint);
+  const ws = new WS(endpoint);
   await new Promise<void>((resolve, reject) => {
     ws.onopen = () => resolve();
     ws.onerror = () => reject(new Error('Could not connect to the browser DevTools socket.'));
