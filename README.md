@@ -1,4 +1,13 @@
-# Crate Digger
+```text
+ ██████╗██████╗  █████╗ ████████╗███████╗    ██████╗ ██╗ ██████╗  ██████╗ ███████╗██████╗ 
+██╔════╝██╔══██╗██╔══██╗╚══██╔══╝██╔════╝    ██╔══██╗██║██╔════╝ ██╔════╝ ██╔════╝██╔══██╗
+██║     ██████╔╝███████║   ██║   █████╗      ██║  ██║██║██║  ███╗██║  ███╗█████╗  ██████╔╝
+██║     ██╔══██╗██╔══██║   ██║   ██╔══╝      ██║  ██║██║██║   ██║██║   ██║██╔══╝  ██╔══██╗
+╚██████╗██║  ██║██║  ██║   ██║   ███████╗    ██████╔╝██║╚██████╔╝╚██████╔╝███████╗██║  ██║
+ ╚═════╝╚═╝  ╚═╝╚═╝  ╚═╝   ╚═╝   ╚══════╝    ╚═════╝ ╚═╝ ╚═════╝  ╚═════╝ ╚══════╝╚═╝  ╚═╝
+```
+
+*official free downloads only · curator graph · no stream rips*
 
 Crate Digger récupère les morceaux SoundCloud dont l'artiste a **activé le téléchargement gratuit officiel**, et rien d'autre : pas de rip de stream, pas de conversion. Tu lui donnes le profil d'un curateur ; il parcourt tous les comptes que ce curateur suit, repère leurs morceaux téléchargeables et les range dans un seul dossier, prêts pour tes mixs.
 
