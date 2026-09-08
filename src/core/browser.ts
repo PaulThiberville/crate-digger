@@ -8,9 +8,6 @@ import { debug } from './debug.js';
 import type { HttpResponse } from './http.js';
 import { sleep } from './util.js';
 
-// Node 22+ and Bun ship a global WebSocket; older Node falls back to the `ws` package.
-const WS: typeof WebSocket = (globalThis.WebSocket ?? (await import('ws')).default) as unknown as typeof WebSocket;
-
 const MAC_APPS = [
   'Google Chrome.app/Contents/MacOS/Google Chrome',
   'Microsoft Edge.app/Contents/MacOS/Microsoft Edge',
@@ -43,7 +40,7 @@ export function findBrowser(): string | null {
   return candidates.find((p) => fs.existsSync(p)) ?? null;
 }
 
-const LAUNCH_FLAGS = ['--no-first-run', '--no-default-browser-check', '--disable-sync', '--disable-features=Translate', '--window-size=1100,800'];
+const LAUNCH_FLAGS = ['--no-first-run', '--no-default-browser-check', '--disable-features=Translate', '--window-size=1100,800'];
 
 /** A plain window, not remote-controlled: what Google/Apple sign-in accepts. The profile keeps the cookies. */
 export function launchPlain(exe: string, url: string, profileDir = BROWSER_PROFILE_DIR): ChildProcess {
@@ -154,7 +151,7 @@ export class Browser {
   }
 
   send<T = any>(method: string, params: Record<string, unknown> = {}, sessionId?: string): Promise<T> {
-    if (this.down || this.ws.readyState !== WS.OPEN) return Promise.reject(new Error('Browser session closed.'));
+    if (this.down || this.ws.readyState !== WebSocket.OPEN) return Promise.reject(new Error('Browser session closed.'));
     const id = this.nextId++;
     return new Promise<T>((resolve, reject) => {
       this.pending.set(id, { resolve, reject });
@@ -314,7 +311,7 @@ async function liveEndpoint(portFile: string): Promise<string | null> {
 }
 
 async function connect(endpoint: string): Promise<WebSocket> {
-  const ws = new WS(endpoint);
+  const ws = new WebSocket(endpoint);
   await new Promise<void>((resolve, reject) => {
     ws.onopen = () => resolve();
     ws.onerror = () => reject(new Error('Could not connect to the browser DevTools socket.'));

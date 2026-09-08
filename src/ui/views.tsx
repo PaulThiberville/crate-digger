@@ -58,7 +58,8 @@ export function LoginWait({ onSkip, onManual }: { onSkip: () => void; onManual: 
       <Text>
         <Spinner /> Log in to SoundCloud in the browser window that just opened.
       </Text>
-      <Text color={color.dim}>Separate profile, no bookmarks or extensions: expected. Closes after login.</Text>
+      <Text color={color.dim}>Separate profile, empty at first; your usual Chrome is untouched.</Text>
+      <Text color={color.dim}>Tip: turn on Chrome sync there once to get extensions and bookmarks.</Text>
       <Text color={color.dim}>Esc: skip login · M: sign-in refused? use a plain window</Text>
     </Box>
   );

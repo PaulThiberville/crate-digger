@@ -1,3 +1,4 @@
+import './preflight.js'; // first: Node version check, before ink and friends load
 import { parseArgs } from 'node:util';
 import fsp from 'node:fs/promises';
 import { render } from 'ink';

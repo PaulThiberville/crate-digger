@@ -5,14 +5,14 @@ Terminal tool that archives **only official SoundCloud free downloads**: paste a
 ## Use
 
 1. Grab `crate` (macOS) or `crate.exe` (Windows) from the Releases page — no Node needed. macOS: `chmod +x crate && xattr -d com.apple.quarantine crate`.
-2. Run `crate`. It opens Chrome/Edge/Brave on SoundCloud's login page (no password in the terminal) in a **separate profile**: no bookmarks or extensions there, your usual profile is untouched, and the window closes once you are logged in. If Chrome ever looks empty afterwards, that is the FREEBASS instance still running: quit it (hold ⌘Q) and reopen Chrome. If Google/Apple sign-in says the browser is not secure, press `M`: a plain window opens, log in, quit it, FREEBASS carries on. The session is stored user-only in `~/.config/crate/`, never in the repo. `crate logout` forgets it.
+2. Run `crate`. It opens Chrome/Edge/Brave on SoundCloud's login page (no password in the terminal) in a **separate profile**: empty at first, your usual profile is untouched, and the window closes once you are logged in. Turn on Chrome sync in that window once if you want your extensions, bookmarks and password manager there. If Chrome ever looks empty afterwards, that is the FREEBASS instance still running: quit it (hold ⌘Q) and reopen Chrome. If Google/Apple sign-in says the browser is not secure, press `M`: a plain window opens, log in, quit it, FREEBASS carries on. The session is stored user-only in `~/.config/crate/`, never in the repo. `crate logout` forgets it.
 3. Paste `https://soundcloud.com/<curator>`, read the recap (HIGH = lossless originals, LOW = lossy), pick what to download.
 
 Files land in `~/Documents/Music/Crate Digger/<curator>/<uploader>/`. The global `index.json` there prevents re-downloads across curators (id + file still present). `--max-minutes 20` changes the length filter. Exit code is non-zero when a download failed.
 
 ## Dev
 
-Node ≥ 22: `npm install`, then `npm start` (same flow as the binary), `npm test`, `npm run typecheck`. `npm run mock` starts an offline fake SoundCloud to try the whole flow without touching the real API (see the header of `scripts/mock-soundcloud.mjs`). `CRATE_DEBUG=1` writes a request log to `~/.config/crate/debug.log`.
+Node ≥ 22 (`.nvmrc`, checked at startup): `npm install`, then `npm start` (same flow as the binary), `npm test`, `npm run typecheck`. `npm run mock` starts an offline fake SoundCloud to try the whole flow without touching the real API (see the header of `scripts/mock-soundcloud.mjs`). `CRATE_DEBUG=1` writes a request log to `~/.config/crate/debug.log`.
 
 ## Binaries
 
