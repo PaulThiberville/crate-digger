@@ -48,16 +48,33 @@ export function LoginChoice({ message, onChoose }: { message: string; onChoose: 
   );
 }
 
-export function LoginWait({ onSkip }: { onSkip: () => void }) {
-  useInput((_, key) => {
+export function LoginWait({ onSkip, onManual }: { onSkip: () => void; onManual: () => void }) {
+  useInput((input, key) => {
     if (key.escape) onSkip();
+    else if (input.toLowerCase() === 'm') onManual();
   });
   return (
     <Box flexDirection="column">
       <Text>
         <Spinner /> Log in to SoundCloud in the browser window that just opened.
       </Text>
-      <Text color={color.dim}>The window is your SoundCloud session for this run — keep it open. Esc to continue without login.</Text>
+      <Text color={color.dim}>The window is your SoundCloud session for this run — keep it open.</Text>
+      <Text color={color.dim}>Esc: skip login · M: sign-in refused? use a plain window</Text>
+    </Box>
+  );
+}
+
+export function LoginManual({ onSkip }: { onSkip: () => void }) {
+  useInput((_, key) => {
+    if (key.escape) onSkip();
+  });
+  return (
+    <Box flexDirection="column">
+      <Text>
+        <Spinner /> A plain browser window (not remote-controlled) opened on SoundCloud's sign-in page.
+      </Text>
+      <Text color={color.dim}>Log in there, then quit that browser (hold ⌘Q on macOS, close it on Windows).</Text>
+      <Text color={color.dim}>FREEBASS continues by itself · Esc: continue without login</Text>
     </Box>
   );
 }

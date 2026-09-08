@@ -40,6 +40,23 @@ export function findBrowser(): string | null {
   return candidates.find((p) => fs.existsSync(p)) ?? null;
 }
 
+const LAUNCH_FLAGS = ['--no-first-run', '--no-default-browser-check', '--disable-sync', '--disable-features=Translate', '--window-size=1100,800'];
+
+/** A plain window, not remote-controlled: what Google/Apple sign-in accepts. The profile keeps the cookies. */
+export function launchPlain(exe: string, url: string, profileDir = BROWSER_PROFILE_DIR): ChildProcess {
+  return spawn(exe, [`--user-data-dir=${profileDir}`, ...LAUNCH_FLAGS, ...extraFlags(), url], { stdio: 'ignore' });
+}
+
+const extraFlags = () => (process.env.CRATE_BROWSER_FLAGS ?? '').split(' ').filter(Boolean);
+
+/** Graceful quit (flushes the profile to disk), SIGKILL if it drags its feet. */
+export async function stopProcess(child: ChildProcess): Promise<void> {
+  if (child.exitCode !== null || child.signalCode !== null) return;
+  const exited = new Promise<void>((resolve) => child.once('exit', () => resolve()));
+  child.kill();
+  await Promise.race([exited, sleep(5000).then(() => child.kill('SIGKILL'))]);
+}
+
 export class NoBrowserError extends Error {
   constructor() {
     super('No Chromium-based browser found (Chrome, Edge, Brave). Install one or set CRATE_BROWSER=/path/to/browser.');
@@ -71,7 +88,7 @@ export class Browser {
   private down = false;
 
   private constructor(
-    private readonly child: ChildProcess,
+    private readonly child: ChildProcess | null,
     private readonly ws: WebSocket,
   ) {
     this.closed = new Promise((resolve) => {
@@ -80,23 +97,30 @@ export class Browser {
     ws.onmessage = (ev) => this.onMessage(JSON.parse(String(ev.data)) as CdpMessage);
     ws.onclose = () => this.teardown();
     ws.onerror = () => this.teardown();
-    child.on('exit', () => this.teardown());
+    child?.on('exit', () => this.teardown());
   }
 
   static async launch(exe: string, url: string, profileDir = BROWSER_PROFILE_DIR): Promise<Browser> {
     await fsp.mkdir(profileDir, { recursive: true });
     const portFile = path.join(profileDir, 'DevToolsActivePort');
+
+    // A window from a previous run may still be open: reuse it instead of fighting over the profile.
+    const running = await liveEndpoint(portFile);
+    if (running) {
+      const browser = new Browser(null, await connect(running));
+      await browser.open(url).catch(() => undefined);
+      debug('browser reused');
+      return browser;
+    }
+
     await fsp.rm(portFile, { force: true });
-    const extra = (process.env.CRATE_BROWSER_FLAGS ?? '').split(' ').filter(Boolean);
     const args = [
       '--remote-debugging-port=0',
       `--user-data-dir=${profileDir}`,
-      '--no-first-run',
-      '--no-default-browser-check',
-      '--disable-sync',
-      '--disable-features=Translate',
-      '--window-size=1100,800',
-      ...extra,
+      // Remote debugging alone makes Chrome report navigator.webdriver=true, which Google sign-in rejects.
+      '--disable-blink-features=AutomationControlled',
+      ...LAUNCH_FLAGS,
+      ...extraFlags(),
       url,
     ];
     const child = spawn(exe, args, { stdio: 'ignore' });
@@ -105,30 +129,23 @@ export class Browser {
     child.once('error', () => (exited = true));
 
     const deadline = Date.now() + 30_000;
-    let endpoint: string | undefined;
+    let endpoint: string | null = null;
     while (!endpoint) {
-      try {
-        const [port, wsPath] = (await fsp.readFile(portFile, 'utf8')).trim().split('\n');
-        if (port && wsPath) endpoint = `ws://127.0.0.1:${port}${wsPath}`;
-      } catch {
-        /* not written yet */
-      }
+      endpoint = await readEndpoint(portFile);
       if (endpoint) break;
-      if (exited) throw new Error('The browser exited before it could be controlled. If a FREEBASS browser window is already open, close it and retry.');
+      if (exited) {
+        throw new Error(
+          'The browser exited before it could be controlled. A FREEBASS browser window is probably still open from a previous run: quit it (Cmd+Q on macOS) and retry.',
+        );
+      }
       if (Date.now() > deadline) {
         child.kill();
         throw new Error('Timed out waiting for the browser to start.');
       }
       await sleep(100);
     }
-
-    const ws = new WebSocket(endpoint);
-    await new Promise<void>((resolve, reject) => {
-      ws.onopen = () => resolve();
-      ws.onerror = () => reject(new Error('Could not connect to the browser DevTools socket.'));
-    });
     debug('browser launched', exe);
-    return new Browser(child, ws);
+    return new Browser(child, await connect(endpoint));
   }
 
   send<T = any>(method: string, params: Record<string, unknown> = {}, sessionId?: string): Promise<T> {
@@ -210,9 +227,7 @@ export class Browser {
     if (!this.down) await Promise.race([this.send('Browser.close').catch(() => undefined), sleep(2000)]);
     this.ws.close();
     this.teardown();
-    if (this.child.exitCode === null && !this.child.killed) this.child.kill();
-    const exited = new Promise<void>((resolve) => (this.child.exitCode === null ? this.child.once('exit', () => resolve()) : resolve()));
-    await Promise.race([exited, sleep(3000).then(() => this.child.kill('SIGKILL'))]);
+    if (this.child) await stopProcess(this.child);
   }
 
   private on(listener: (m: CdpMessage) => void): () => void {
@@ -268,6 +283,38 @@ export class Browser {
     await this.waitForLoad(sessionId);
     return sessionId;
   }
+}
+
+async function readEndpoint(portFile: string): Promise<string | null> {
+  try {
+    const [port, wsPath] = (await fsp.readFile(portFile, 'utf8')).trim().split('\n');
+    return port && wsPath ? `ws://127.0.0.1:${port}${wsPath}` : null;
+  } catch {
+    return null;
+  }
+}
+
+/** DevTools endpoint of a still-running browser using our profile, or null when the port file is stale. */
+async function liveEndpoint(portFile: string): Promise<string | null> {
+  const endpoint = await readEndpoint(portFile);
+  if (!endpoint) return null;
+  try {
+    const res = await fetch(`http://127.0.0.1:${new URL(endpoint).port}/json/version`, { signal: AbortSignal.timeout(1500) });
+    if (!res.ok) return null;
+    const { webSocketDebuggerUrl } = (await res.json()) as { webSocketDebuggerUrl?: string };
+    return webSocketDebuggerUrl ?? endpoint;
+  } catch {
+    return null;
+  }
+}
+
+async function connect(endpoint: string): Promise<WebSocket> {
+  const ws = new WebSocket(endpoint);
+  await new Promise<void>((resolve, reject) => {
+    ws.onopen = () => resolve();
+    ws.onerror = () => reject(new Error('Could not connect to the browser DevTools socket.'));
+  });
+  return ws;
 }
 
 function matchesHost(cookieDomain: string): boolean {

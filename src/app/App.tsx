@@ -9,13 +9,14 @@ import { parseCuratorUrl } from '../core/url.js';
 import { isAbort } from '../core/util.js';
 import { Banner } from '../ui/Banner.js';
 import { color } from '../ui/theme.js';
-import { DownloadView, LoginChoice, LoginWait, RecapView, ScanView, Status, Summary, UrlPrompt, pickSelection, type Selection } from '../ui/views.js';
+import { DownloadView, LoginChoice, LoginManual, LoginWait, RecapView, ScanView, Status, Summary, UrlPrompt, pickSelection, type Selection } from '../ui/views.js';
 import type { Runtime } from './runtime.js';
 
 type Phase =
   | { name: 'boot' }
   | { name: 'login-choice'; message: string }
   | { name: 'login-wait' }
+  | { name: 'login-manual' }
   | { name: 'prompt'; busy: boolean; error: string | null }
   | { name: 'scan'; curator: ScUser; stats: ScanStats | null }
   | { name: 'recap'; curator: ScUser; stats: ScanStats; candidates: Candidate[] }
@@ -31,6 +32,8 @@ export function App({ runtime, onExit }: { runtime: Runtime; onExit: (code: numb
   const [status, setStatus] = useState<string | null>(null);
   const [session, setSession] = useState<string | null>(null);
   const loginAbort = useRef<AbortController | null>(null);
+  const loginMode = useRef<'auto' | 'manual'>('auto');
+  const manualSkip = useRef<(() => void) | null>(null);
   const dlStats = useRef<DownloadStats | null>(null);
 
   const finish = (code: number) => {
@@ -47,6 +50,7 @@ export function App({ runtime, onExit }: { runtime: Runtime; onExit: (code: numb
     if (key.ctrl && input === 'c') {
       runtime.abort.abort();
       loginAbort.current?.abort();
+      manualSkip.current?.();
       setStatus('stopping…');
       if (phase.name !== 'scan' && phase.name !== 'download') finish(130);
     }
@@ -69,17 +73,43 @@ export function App({ runtime, onExit }: { runtime: Runtime; onExit: (code: numb
       .catch(fatal);
   }, []);
 
+  const loggedIn = (me: ScUser | null, skipped: boolean) => {
+    if (me) {
+      setSession(me.permalink);
+      setStatus(`connected as @${me.permalink}`);
+    } else setStatus(skipped ? 'continuing without login' : 'login did not complete — continuing without login');
+    setPhase({ name: 'prompt', busy: false, error: null });
+  };
+
   const startLogin = async () => {
+    loginMode.current = 'auto';
     setPhase({ name: 'login-wait' });
     const ctrl = new AbortController();
     loginAbort.current = ctrl;
     try {
       const me = await runtime.login(ctrl.signal);
-      if (me) {
-        setSession(me.permalink);
-        setStatus(`connected as @${me.permalink}`);
-      } else setStatus(ctrl.signal.aborted ? 'continuing without login' : 'login did not complete — continuing without login');
-      setPhase({ name: 'prompt', busy: false, error: null });
+      if (loginMode.current === 'auto') loggedIn(me, ctrl.signal.aborted);
+    } catch (err) {
+      if (err instanceof NoBrowserError) return setPhase({ name: 'login-choice', message: err.message });
+      fatal(err);
+    }
+  };
+
+  const startManualLogin = async () => {
+    loginMode.current = 'manual';
+    loginAbort.current?.abort(); // stop the automatic cookie polling
+    setPhase({ name: 'login-manual' });
+    let skipped = false;
+    try {
+      const me = await runtime.loginManual(
+        new Promise<void>((resolve) => {
+          manualSkip.current = () => {
+            skipped = true;
+            resolve();
+          };
+        }),
+      );
+      loggedIn(me, skipped);
     } catch (err) {
       if (err instanceof NoBrowserError) return setPhase({ name: 'login-choice', message: err.message });
       fatal(err);
@@ -136,7 +166,8 @@ export function App({ runtime, onExit }: { runtime: Runtime; onExit: (code: numb
       <Status session={session} library={runtime.library?.dir ?? '…'} message={status} />
       {phase.name === 'boot' && <Text color={color.dim}>starting…</Text>}
       {phase.name === 'login-choice' && <LoginChoice message={phase.message} onChoose={(login) => (login ? void startLogin() : setPhase({ name: 'prompt', busy: false, error: null }))} />}
-      {phase.name === 'login-wait' && <LoginWait onSkip={() => loginAbort.current?.abort()} />}
+      {phase.name === 'login-wait' && <LoginWait onSkip={() => loginAbort.current?.abort()} onManual={() => void startManualLogin()} />}
+      {phase.name === 'login-manual' && <LoginManual onSkip={() => manualSkip.current?.()} />}
       {phase.name === 'prompt' && <UrlPrompt busy={phase.busy} error={phase.error} onSubmit={(raw) => void submitUrl(raw)} />}
       {phase.name === 'scan' && (phase.stats ? <ScanView stats={phase.stats} /> : <Text color={color.dim}>resolving followings…</Text>)}
       {phase.name === 'recap' && (

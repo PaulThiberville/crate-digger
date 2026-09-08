@@ -2,12 +2,14 @@ import fsp from 'node:fs/promises';
 import { CONFIG_DIR, LOGIN_TIMEOUT_MS, WEB_BASE } from '../config.js';
 import { SoundCloud } from '../core/api.js';
 import { clearSession, loadSession, saveSession, verifyToken, waitForLogin } from '../core/auth.js';
-import { Browser, NoBrowserError, findBrowser } from '../core/browser.js';
+import type { ChildProcess } from 'node:child_process';
+import { Browser, NoBrowserError, findBrowser, launchPlain, stopProcess } from '../core/browser.js';
 import { loadClientId, saveClientId, scrapeClientId } from '../core/clientId.js';
 import { downloadSelection, type DownloadStats } from '../core/download.js';
 import { Library } from '../core/library.js';
 import { scanCurator, type ScanResult, type ScanStats } from '../core/scan.js';
 import type { Candidate, ScUser, Session } from '../core/types.js';
+import { sleep } from '../core/util.js';
 
 /** Everything the TUI drives, without React: boot, login, scan, download, shutdown. */
 export class Runtime {
@@ -18,6 +20,7 @@ export class Runtime {
   readonly abort = new AbortController();
   onStatus: (message: string) => void = () => undefined;
   private launching: Promise<Browser> | null = null;
+  private plainWindow: ChildProcess | null = null;
 
   constructor(readonly maxMinutes: number) {}
 
@@ -73,7 +76,33 @@ export class Runtime {
     if (existing) await existing.open(signin).catch(() => undefined); // already running: show the login page in a new tab
     this.onStatus('waiting for you to log in in the browser window…');
     const token = await waitForLogin(browser, { timeoutMs: LOGIN_TIMEOUT_MS, signal });
-    if (!token) return null;
+    return token ? this.adoptToken(token) : null;
+  }
+
+  /**
+   * Fallback for sign-in providers that refuse remote-controlled browsers: a plain window on the same
+   * profile. Chrome only writes cookies to disk on a clean quit, so we wait for the user to quit that
+   * browser (never kill it), then read the cookie through DevTools.
+   */
+  async loginManual(skipped: Promise<void>): Promise<ScUser | null> {
+    const exe = findBrowser();
+    if (!exe) throw new NoBrowserError();
+    if (this.browser) await this.browser.close(); // frees the profile for the plain window
+    const child = launchPlain(exe, `${WEB_BASE}/signin`);
+    this.plainWindow = child;
+    this.onStatus('log in in the plain window, then quit that browser');
+    const quit = new Promise<boolean>((resolve) => child.once('exit', () => resolve(true)));
+    const proceed = await Promise.race([quit, skipped.then(() => false), sleep(LOGIN_TIMEOUT_MS).then(() => false)]);
+    this.plainWindow = null;
+    if (!proceed) {
+      await stopProcess(child);
+      return null;
+    }
+    const token = await (await this.ensureBrowser()).cookie('oauth_token');
+    return token ? this.adoptToken(token) : null;
+  }
+
+  private async adoptToken(token: string): Promise<ScUser | null> {
     const me = await verifyToken(this.api, token);
     if (!me) return null;
     this.api.token = token;
@@ -121,6 +150,7 @@ export class Runtime {
 
   async shutdown(): Promise<void> {
     this.abort.abort();
+    if (this.plainWindow) await stopProcess(this.plainWindow).catch(() => undefined);
     await this.browser?.close().catch(() => undefined);
   }
 }

@@ -95,7 +95,7 @@ function web(req, res) {
     case '/signin':
       return send(res, 200, 'text/html', '<h1>Mock sign-in</h1><p>Logging you in in 2 s…</p><script>setTimeout(()=>{location.href="/mock-login"},2000)</script>');
     case '/mock-login':
-      res.writeHead(302, { 'set-cookie': `oauth_token=${TOKEN}; Path=/; HttpOnly`, location: '/' });
+      res.writeHead(302, { 'set-cookie': `oauth_token=${TOKEN}; Path=/; Max-Age=31536000; HttpOnly`, location: '/' });
       return res.end();
     default:
       return send(res, 404, 'text/plain', 'not found');
