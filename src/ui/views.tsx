@@ -75,7 +75,7 @@ export function LoginManual({ onSkip }: { onSkip: () => void }) {
         <Spinner /> A plain browser window (not remote-controlled) opened on SoundCloud's sign-in page.
       </Text>
       <Text color={color.dim}>Log in there, then quit that browser (hold ⌘Q on macOS, close it on Windows).</Text>
-      <Text color={color.dim}>FREEBASS continues by itself · Esc: continue without login</Text>
+      <Text color={color.dim}>Crate Digger continues by itself · Esc: continue without login</Text>
     </Box>
   );
 }

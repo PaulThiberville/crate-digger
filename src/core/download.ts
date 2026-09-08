@@ -122,7 +122,7 @@ async function downloadOne(
     item.ext ??
     'mp3';
   const size = Number(res.headers.get('content-length')) || item.size;
-  const target = library.target(curator.permalink, item.uploader, item.title, item.id, ext);
+  const target = library.target(item.uploaderName, item.title, item.id, ext);
   const part = `${target.abs}.part`;
   const current: CurrentFile = { title: item.title, uploader: item.uploaderName, ext, size, bytes: 0 };
   stats.current = current;

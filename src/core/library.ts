@@ -2,12 +2,12 @@ import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { INDEX_FILE, LIBRARY_DIR } from '../config.js';
-import { safeName, slugify } from './slug.js';
+import { fileName } from './filename.js';
 import type { IndexEntry } from './types.js';
 
 export type Owned = 'have' | 'stale' | 'none';
 
-/** The fixed library root and its global index.json (spec §4). */
+/** The fixed library root (all files flat) and its global index.json. */
 export class Library {
   readonly dir = LIBRARY_DIR;
   private entries: IndexEntry[] = [];
@@ -57,12 +57,10 @@ export class Library {
     await this.save();
   }
 
-  /** `{curator}/{uploader}/{title}.{ext}`, never clobbering a different track that has the same slug. */
-  target(curator: string, uploader: string, title: string, id: number, ext: string): { rel: string; abs: string } {
-    const dir = `${safeName(curator)}/${safeName(uploader)}`;
-    const base = slugify(title, `track-${id}`);
-    let rel = `${dir}/${base}.${ext}`;
-    if (fs.existsSync(this.abs(rel)) && this.ownerOf(rel) !== String(id)) rel = `${dir}/${base}-${id}.${ext}`;
+  /** `Uploader - Title.ext` at the library root, never clobbering a different track with the same name. */
+  target(uploader: string, title: string, id: number, ext: string): { rel: string; abs: string } {
+    let rel = fileName(uploader, title, ext);
+    if (fs.existsSync(this.abs(rel)) && this.ownerOf(rel) !== String(id)) rel = fileName(uploader, `${title} [${id}]`, ext);
     return { rel, abs: this.abs(rel) };
   }
 

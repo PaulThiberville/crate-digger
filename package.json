@@ -1,7 +1,7 @@
 {
   "name": "crate-digger",
   "version": "0.1.0",
-  "description": "FREEBASS — SoundCloud official free downloads only, from a curator's followings graph",
+  "description": "Crate Digger — SoundCloud official free downloads only, from a curator's followings graph",
   "private": true,
   "type": "module",
   "license": "MIT",

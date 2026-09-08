@@ -136,7 +136,7 @@ export class Browser {
         if (endpoint) break;
         if (exited) {
           throw new Error(
-            'The browser exited before it could be controlled. A FREEBASS browser window is probably still open from a previous run: quit it (Cmd+Q on macOS) and retry.',
+            'The browser exited before it could be controlled. A Crate Digger browser window is probably still open from a previous run: quit it (Cmd+Q on macOS) and retry.',
           );
         }
         if (Date.now() > deadline) throw new Error('Timed out waiting for the browser to start.');

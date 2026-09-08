@@ -130,7 +130,7 @@ export class Runtime {
     this.launching ??= (async () => {
       const exe = findBrowser();
       if (!exe) throw new NoBrowserError();
-      this.onStatus('opening a browser window — separate FREEBASS profile, your own browser profile is untouched');
+      this.onStatus('opening a browser window — separate Crate Digger profile, your own browser profile is untouched');
       const browser = await Browser.launch(exe, url);
       this.browser = browser;
       this.api?.useBrowser(browser);
