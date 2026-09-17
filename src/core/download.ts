@@ -7,7 +7,7 @@ import { ApiError, type SoundCloud } from './api.js';
 import { debug } from './debug.js';
 import { detectExt } from './filter.js';
 import type { Library } from './library.js';
-import type { Candidate, ScUser } from './types.js';
+import type { Candidate, Source } from './types.js';
 import { Speedometer, abortError, isAbort } from './util.js';
 
 export interface CurrentFile {
@@ -46,7 +46,7 @@ export interface DownloadOptions {
 export async function downloadSelection(
   api: SoundCloud,
   library: Library,
-  curator: ScUser,
+  source: Source,
   items: Candidate[],
   opts: DownloadOptions,
 ): Promise<DownloadStats> {
@@ -77,7 +77,7 @@ export async function downloadSelection(
         if (stats.bytesTotal !== null) stats.bytesTotal -= item.size ?? 0;
         continue;
       }
-      await downloadOne(api, library, curator, item, stats, speedometer, opts.signal);
+      await downloadOne(api, library, source, item, stats, speedometer, opts.signal);
       stats.ok++;
     } catch (err) {
       if (isAbort(err) || opts.signal.aborted) throw abortError();
@@ -100,7 +100,7 @@ export async function downloadSelection(
 async function downloadOne(
   api: SoundCloud,
   library: Library,
-  curator: ScUser,
+  source: Source,
   item: Candidate,
   stats: DownloadStats,
   speedometer: Speedometer,
@@ -145,7 +145,8 @@ async function downloadOne(
     id: String(item.id),
     path: target.rel,
     title: item.title,
-    curator: curator.permalink,
+    curator: source.profile.permalink,
+    mode: source.mode,
     uploader: item.uploader,
     downloaded_at: new Date().toISOString(),
   });

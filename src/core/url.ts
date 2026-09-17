@@ -15,7 +15,7 @@ const PERMALINK = /^[a-z0-9_-]{1,64}$/;
  * Accepts `https://soundcloud.com/name`, `soundcloud.com/name/`, `m.soundcloud.com/name/tracks`
  * or a bare `name`. Returns the permalink, or null when it is not a profile URL.
  */
-export function parseCuratorUrl(input: string): string | null {
+export function parseProfileUrl(input: string): string | null {
   const raw = input.trim();
   if (!raw) return null;
   if (!raw.includes('/') && !raw.includes('.')) return PERMALINK.test(raw.toLowerCase()) ? raw.toLowerCase() : null;

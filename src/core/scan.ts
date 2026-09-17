@@ -2,13 +2,14 @@ import { SCAN_CONCURRENCY, USER_AGENT } from '../config.js';
 import { ApiError, type SoundCloud } from './api.js';
 import { debug } from './debug.js';
 import { classify, detectExt, eligibility } from './filter.js';
-import type { Candidate, ScUser, SkipReason } from './types.js';
+import type { Candidate, ScTrack, ScUser, SkipReason, Source } from './types.js';
 import { abortError, runPool } from './util.js';
 
 export interface ScanStats {
-  curator: ScUser;
-  followingsTotal: number;
-  followingsDone: number;
+  source: Source;
+  /** Progress unit: followings visited (followings mode) or liked tracks inspected (likes mode). */
+  total: number;
+  done: number;
   tracksSeen: number;
   eligible: number;
   high: number;
@@ -38,12 +39,89 @@ export interface ScanResult {
   candidates: Candidate[];
 }
 
+type Uploader = Pick<ScUser, 'permalink' | 'username'>;
+
+/** Dispatch on the mode: both strategies feed the same eligibility → probe → tally pipeline. */
+export function scan(api: SoundCloud, source: Source, opts: ScanOptions): Promise<ScanResult> {
+  return source.mode === 'likes' ? scanLikes(api, source, opts) : scanFollowings(api, source, opts);
+}
+
 /** Curator → every account they follow → every track those accounts published (spec §2.1). */
-export async function scanCurator(api: SoundCloud, curator: ScUser, opts: ScanOptions): Promise<ScanResult> {
+export async function scanFollowings(api: SoundCloud, source: Source, opts: ScanOptions): Promise<ScanResult> {
+  const run = start(api, source, source.profile.followings_count ?? 0, opts);
+  const { stats } = run;
+  stats.current = 'listing followings…';
+
+  const followings: ScUser[] = [];
+  for await (const user of api.followings(source.profile.id)) {
+    if (opts.signal.aborted) throw abortError();
+    followings.push(user);
+    stats.total = Math.max(stats.total, followings.length);
+  }
+  stats.total = followings.length;
+
+  await runPool(followings, SCAN_CONCURRENCY, async (user) => {
+    try {
+      for await (const track of api.tracks(user.id)) {
+        if (opts.signal.aborted) return;
+        await run.inspect(track, user);
+      }
+    } catch (err) {
+      if (!opts.signal.aborted) {
+        stats.errors++;
+        debug('following failed', user.permalink, String(err));
+      }
+    } finally {
+      stats.done++;
+    }
+  });
+  return run.finish();
+}
+
+/** Profile → every track they liked, whoever published it. Liked playlists are ignored. */
+export async function scanLikes(api: SoundCloud, source: Source, opts: ScanOptions): Promise<ScanResult> {
+  const run = start(api, source, source.profile.likes_count ?? 0, opts);
+  const { stats } = run;
+  stats.current = 'listing likes…';
+
+  const liked: ScTrack[] = [];
+  const seen = new Set<number>();
+  for await (const track of api.likes(source.profile.id)) {
+    if (opts.signal.aborted) throw abortError();
+    if (seen.has(track.id)) continue;
+    seen.add(track.id);
+    liked.push(track);
+    stats.total = Math.max(stats.total, liked.length);
+    stats.current = `listing likes… ${liked.length}`;
+  }
+  stats.total = liked.length; // likes_count also counts playlists: the listing is the truth
+
+  await runPool(liked, SCAN_CONCURRENCY, async (track) => {
+    if (opts.signal.aborted) return;
+    try {
+      await run.inspect(track, uploaderOf(track));
+    } catch (err) {
+      if (!opts.signal.aborted) {
+        stats.errors++;
+        debug('like failed', track.id, String(err));
+      }
+    } finally {
+      stats.done++;
+    }
+  });
+  return run.finish();
+}
+
+function uploaderOf(track: ScTrack): Uploader {
+  return { permalink: track.user?.permalink ?? 'unknown', username: track.user?.username ?? 'Unknown' };
+}
+
+/** The part shared by every mode: live stats, the eligibility → probe → tally step, and the wrap-up. */
+function start(api: SoundCloud, source: Source, total: number, opts: ScanOptions) {
   const stats: ScanStats = {
-    curator,
-    followingsTotal: curator.followings_count ?? 0,
-    followingsDone: 0,
+    source,
+    total,
+    done: 0,
     tracksSeen: 0,
     eligible: 0,
     high: 0,
@@ -54,70 +132,54 @@ export async function scanCurator(api: SoundCloud, curator: ScUser, opts: ScanOp
     errors: 0,
     bytes: 0,
     sizeUnknown: 0,
-    current: 'listing followings…',
+    current: 'starting…',
     startedAt: Date.now(),
   };
   const candidates: Candidate[] = [];
   opts.onStats?.(stats);
 
-  const followings: ScUser[] = [];
-  for await (const user of api.followings(curator.id)) {
-    if (opts.signal.aborted) throw abortError();
-    followings.push(user);
-    stats.followingsTotal = Math.max(stats.followingsTotal, followings.length);
-  }
-  stats.followingsTotal = followings.length;
-
-  await runPool(followings, SCAN_CONCURRENCY, async (user) => {
-    try {
-      for await (const track of api.tracks(user.id)) {
-        if (opts.signal.aborted) return;
-        stats.tracksSeen++;
-        stats.current = `${user.username} — ${track.title}`;
-        const reason = eligibility(track, opts.maxMs);
-        if (reason) {
-          stats.skipped[reason]++;
-          continue;
-        }
-        const candidate: Candidate = {
-          id: track.id,
-          title: track.title,
-          uploader: user.permalink,
-          uploaderName: user.username,
-          duration: track.duration,
-          quality: 'UNKNOWN',
-        };
-        if (opts.probe) {
-          if ((await probe(api, candidate, stats)) === 'forbidden') {
-            stats.skipped.forbidden++;
-            continue;
-          }
-        } else {
-          candidate.loginRequired = true;
-          stats.loginRequired++;
-        }
-        candidates.push(candidate);
-        stats.eligible++;
-        if (candidate.quality === 'HIGH') stats.high++;
-        else if (candidate.quality === 'LOW') stats.low++;
-        else stats.unknown++;
-        if (candidate.size) stats.bytes += candidate.size;
-        else stats.sizeUnknown++;
-      }
-    } catch (err) {
-      if (!opts.signal.aborted) {
-        stats.errors++;
-        debug('following failed', user.permalink, String(err));
-      }
-    } finally {
-      stats.followingsDone++;
+  const inspect = async (track: ScTrack, uploader: Uploader): Promise<void> => {
+    stats.tracksSeen++;
+    stats.current = `${uploader.username} — ${track.title}`;
+    const reason = eligibility(track, opts.maxMs);
+    if (reason) {
+      stats.skipped[reason]++;
+      return;
     }
-  });
+    const candidate: Candidate = {
+      id: track.id,
+      title: track.title,
+      uploader: uploader.permalink,
+      uploaderName: uploader.username,
+      duration: track.duration,
+      quality: 'UNKNOWN',
+    };
+    if (opts.probe) {
+      if ((await probe(api, candidate, stats)) === 'forbidden') {
+        stats.skipped.forbidden++;
+        return;
+      }
+    } else {
+      candidate.loginRequired = true;
+      stats.loginRequired++;
+    }
+    candidates.push(candidate);
+    stats.eligible++;
+    if (candidate.quality === 'HIGH') stats.high++;
+    else if (candidate.quality === 'LOW') stats.low++;
+    else stats.unknown++;
+    if (candidate.size) stats.bytes += candidate.size;
+    else stats.sizeUnknown++;
+  };
 
-  if (opts.signal.aborted) throw abortError();
-  stats.current = 'done';
-  stats.finishedAt = Date.now();
-  return { stats, candidates };
+  const finish = (): ScanResult => {
+    if (opts.signal.aborted) throw abortError();
+    stats.current = 'done';
+    stats.finishedAt = Date.now();
+    return { stats, candidates };
+  };
+
+  return { stats, candidates, inspect, finish };
 }
 
 /** Learn the original format and size from the official download link (the only place they are exposed). */

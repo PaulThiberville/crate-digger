@@ -4,11 +4,31 @@ import os from 'node:os';
 import { useEffect, useState } from 'react';
 import type { DownloadStats } from '../core/download.js';
 import type { ScanStats } from '../core/scan.js';
-import type { Candidate, Quality } from '../core/types.js';
+import type { Candidate, Mode, Quality } from '../core/types.js';
 import { fmtBytes, fmtDuration, fmtInt } from '../core/util.js';
 import { useTick } from './hooks.js';
 import { color } from './theme.js';
 import { Bar, Menu, Row, Spinner } from './widgets.js';
+
+/** Wording of each mode: what it walks, whose profile it needs, what its progress counts. */
+export const MODES: Record<Mode, { label: string; hint: string; subject: string; unit: string; placeholder: string }> = {
+  followings: {
+    label: 'Followings tree uploads',
+    hint: 'every upload of the accounts a curator follows',
+    subject: 'curator',
+    unit: 'followings',
+    placeholder: 'https://soundcloud.com/some-curator',
+  },
+  likes: {
+    label: 'Likes',
+    hint: 'every track a profile liked',
+    subject: 'profile',
+    unit: 'likes',
+    placeholder: 'https://soundcloud.com/some-profile',
+  },
+};
+
+const MODE_ORDER: Mode[] = ['followings', 'likes'];
 
 export function Status({ session, library, message }: { session: string | null; library: string; message: string | null }) {
   return (
@@ -80,29 +100,58 @@ export function LoginManual({ onSkip }: { onSkip: () => void }) {
   );
 }
 
-export function UrlPrompt({ busy, error, onSubmit }: { busy: boolean; error: string | null; onSubmit: (raw: string) => void }) {
+export function ModeChoice({ onChoose }: { onChoose: (mode: Mode) => void }) {
+  return (
+    <Box flexDirection="column">
+      <Text bold>What do you want to dig?</Text>
+      <Menu items={MODE_ORDER.map((m) => ({ label: MODES[m].label, hint: MODES[m].hint }))} onSelect={(i) => onChoose(MODE_ORDER[i] ?? 'followings')} />
+    </Box>
+  );
+}
+
+export function UrlPrompt({
+  mode,
+  busy,
+  error,
+  onSubmit,
+  onBack,
+}: {
+  mode: Mode;
+  busy: boolean;
+  error: string | null;
+  onSubmit: (raw: string) => void;
+  onBack: () => void;
+}) {
   const [value, setValue] = useState('');
+  const m = MODES[mode];
   useEffect(() => {
     if (error) setValue(''); // the rejected input is echoed in the error; start clean for the next paste
   }, [error]);
+  useInput((_, key) => {
+    if (key.escape && !busy) onBack();
+  });
   return (
     <Box flexDirection="column">
+      <Text color={color.dim}>
+        mode <Text color={color.accent2}>{m.label}</Text> · {m.hint}
+      </Text>
       <Box>
         <Text color={color.accent} bold>
-          Curator URL:{' '}
+          {m.subject[0]?.toUpperCase()}
+          {m.subject.slice(1)} URL:{' '}
         </Text>
         {busy ? (
           <Text>
             {value} <Spinner /> <Text color={color.dim}>resolving…</Text>
           </Text>
         ) : (
-          <TextInput value={value} onChange={setValue} onSubmit={onSubmit} placeholder="https://soundcloud.com/some-curator" />
+          <TextInput value={value} onChange={setValue} onSubmit={onSubmit} placeholder={m.placeholder} />
         )}
       </Box>
       {error ? (
         <Text color={color.bad}>✖ {error}</Text>
       ) : (
-        <Text color={color.dim}>paste a SoundCloud profile URL, then Enter · Ctrl+C to quit</Text>
+        <Text color={color.dim}>paste a SoundCloud profile URL, then Enter · Esc: change mode · Ctrl+C to quit</Text>
       )}
     </Box>
   );
@@ -110,22 +159,29 @@ export function UrlPrompt({ busy, error, onSubmit }: { busy: boolean; error: str
 
 export function ScanView({ stats }: { stats: ScanStats }) {
   useTick(100);
+  const { mode, profile } = stats.source;
+  const m = MODES[mode];
   const skipped = Object.values(stats.skipped).reduce((a, b) => a + b, 0);
-  const ratio = stats.followingsTotal ? stats.followingsDone / stats.followingsTotal : 0;
+  const ratio = stats.total ? stats.done / stats.total : 0;
   return (
     <Box flexDirection="column">
       <Text>
         <Text color={color.accent} bold>
           SCAN
         </Text>{' '}
-        <Text bold>{stats.curator.username}</Text> <Text color={color.dim}>@{stats.curator.permalink} · {fmtInt(stats.followingsTotal)} followings</Text>
+        <Text color={color.dim}>{m.label} ·</Text> <Text bold>{profile.username}</Text>{' '}
+        <Text color={color.dim}>
+          @{profile.permalink} · {fmtInt(stats.total)} {m.unit}
+        </Text>
       </Text>
       <Text>
-        followings <Bar ratio={ratio} /> {stats.followingsDone}/{stats.followingsTotal}
+        {m.unit.padEnd(10)} <Bar ratio={ratio} /> {stats.done}/{stats.total}
       </Text>
-      <Text>
-        tracks inspected <Text bold>{fmtInt(stats.tracksSeen)}</Text>
-      </Text>
+      {mode === 'followings' ? (
+        <Text>
+          tracks inspected <Text bold>{fmtInt(stats.tracksSeen)}</Text>
+        </Text>
+      ) : null}
       <Text>
         <Text color={color.ok}>eligible {stats.eligible}</Text> · <Text color={color.accent2}>high {stats.high}</Text> ·{' '}
         <Text color={color.warn}>low {stats.low}</Text> · unknown {stats.unknown} · <Text color={color.dim}>skipped {fmtInt(skipped)}</Text> ·{' '}
@@ -156,6 +212,8 @@ export function RecapView({
   loggedIn: boolean;
   onChoose: (selection: Selection | 'quit') => void;
 }) {
+  const { mode, profile } = stats.source;
+  const m = MODES[mode];
   const size = (list: Candidate[]) => {
     const known = list.reduce((n, c) => n + (c.size ?? 0), 0);
     const unknown = list.filter((c) => !c.size).length;
@@ -171,12 +229,15 @@ export function RecapView({
   return (
     <Box flexDirection="column">
       <Text color={color.accent} bold>
-        RECAP <Text color={color.dim}>· scan took {fmtDuration((stats.finishedAt ?? Date.now()) - stats.startedAt)}</Text>
+        RECAP{' '}
+        <Text color={color.dim}>
+          · {m.label} · scan took {fmtDuration((stats.finishedAt ?? Date.now()) - stats.startedAt)}
+        </Text>
       </Text>
-      <Row label="curator">
-        <Text bold>{stats.curator.username}</Text> <Text color={color.dim}>@{stats.curator.permalink}</Text>
+      <Row label={m.subject}>
+        <Text bold>{profile.username}</Text> <Text color={color.dim}>@{profile.permalink}</Text>
       </Row>
-      <Row label="followings">{fmtInt(stats.followingsTotal)}</Row>
+      <Row label={m.unit}>{fmtInt(stats.total)}</Row>
       <Row label="tracks">{fmtInt(stats.tracksSeen)} inspected</Row>
       <Row label="eligible">
         <Text color={color.ok} bold>

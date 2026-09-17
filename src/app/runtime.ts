@@ -7,8 +7,8 @@ import { Browser, NoBrowserError, findBrowser, launchPlain, stopProcess } from '
 import { loadClientId, saveClientId, scrapeClientId } from '../core/clientId.js';
 import { downloadSelection, type DownloadStats } from '../core/download.js';
 import { Library } from '../core/library.js';
-import { scanCurator, type ScanResult, type ScanStats } from '../core/scan.js';
-import type { Candidate, ScUser, Session } from '../core/types.js';
+import { scan as scanSource, type ScanResult, type ScanStats } from '../core/scan.js';
+import type { Candidate, ScUser, Session, Source } from '../core/types.js';
 import { sleep } from '../core/util.js';
 
 /** Everything the TUI drives, without React: boot, login, scan, download, shutdown. */
@@ -147,18 +147,18 @@ export class Runtime {
     return this.launching;
   }
 
-  async resolveCurator(permalink: string): Promise<ScUser> {
+  async resolveProfile(permalink: string): Promise<ScUser> {
     const user = await this.api.resolveUser(`https://soundcloud.com/${permalink}`);
     if (user?.kind !== 'user' || !user.id) throw new Error('This URL is not a SoundCloud profile.');
     return user;
   }
 
-  scan(curator: ScUser, onStats: (stats: ScanStats) => void): Promise<ScanResult> {
-    return scanCurator(this.api, curator, { maxMs: this.maxMinutes * 60_000, probe: this.session !== null, signal: this.signal, onStats });
+  scan(source: Source, onStats: (stats: ScanStats) => void): Promise<ScanResult> {
+    return scanSource(this.api, source, { maxMs: this.maxMinutes * 60_000, probe: this.session !== null, signal: this.signal, onStats });
   }
 
-  download(curator: ScUser, items: Candidate[], onStats: (stats: DownloadStats) => void): Promise<DownloadStats> {
-    return downloadSelection(this.api, this.library, curator, items, { signal: this.signal, onStats });
+  download(source: Source, items: Candidate[], onStats: (stats: DownloadStats) => void): Promise<DownloadStats> {
+    return downloadSelection(this.api, this.library, source, items, { signal: this.signal, onStats });
   }
 
   async shutdown(): Promise<void> {

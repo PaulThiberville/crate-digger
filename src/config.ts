@@ -4,7 +4,7 @@ import path from 'node:path';
 export const APP_NAME = 'CRATE DIGGER';
 export const CMD = 'crate';
 export const VERSION = '0.1.0';
-export const TAGLINE = 'official free downloads only · curator graph · no stream rips';
+export const TAGLINE = 'official free downloads only · followings graph or likes · no stream rips';
 
 const env = process.env;
 

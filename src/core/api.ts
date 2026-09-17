@@ -3,7 +3,7 @@ import type { Browser } from './browser.js';
 import { saveClientId, scrapeClientId } from './clientId.js';
 import { debug } from './debug.js';
 import { directTransport, isDataDome, type HttpResponse } from './http.js';
-import type { ScTrack, ScUser } from './types.js';
+import type { ScLike, ScTrack, ScUser } from './types.js';
 import { backoff, Limiter, sleep } from './util.js';
 
 export class ApiError extends Error {
@@ -62,6 +62,11 @@ export class SoundCloud {
 
   tracks(userId: number): AsyncGenerator<ScTrack> {
     return this.collection<ScTrack>(`/users/${userId}/tracks`);
+  }
+
+  /** Tracks a user liked, newest first. Liked playlists are not expanded: only direct track likes count. */
+  async *likes(userId: number): AsyncGenerator<ScTrack> {
+    for await (const like of this.collection<ScLike>(`/users/${userId}/likes`)) if (like.track) yield like.track;
   }
 
   /** The only sanctioned way to get a file (spec §5.1). 401 = login required, 403 = not available / quota. */

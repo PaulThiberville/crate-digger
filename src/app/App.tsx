@@ -4,12 +4,26 @@ import { ApiError } from '../core/api.js';
 import { NoBrowserError } from '../core/browser.js';
 import type { DownloadStats } from '../core/download.js';
 import type { ScanStats } from '../core/scan.js';
-import type { Candidate, ScUser } from '../core/types.js';
-import { parseCuratorUrl } from '../core/url.js';
+import type { Candidate, Mode, ScUser, Source } from '../core/types.js';
+import { parseProfileUrl } from '../core/url.js';
 import { isAbort } from '../core/util.js';
 import { Banner } from '../ui/Banner.js';
 import { color } from '../ui/theme.js';
-import { DownloadView, LoginChoice, LoginManual, LoginWait, RecapView, ScanView, Status, Summary, UrlPrompt, pickSelection, type Selection } from '../ui/views.js';
+import {
+  DownloadView,
+  LoginChoice,
+  LoginManual,
+  LoginWait,
+  MODES,
+  ModeChoice,
+  RecapView,
+  ScanView,
+  Status,
+  Summary,
+  UrlPrompt,
+  pickSelection,
+  type Selection,
+} from '../ui/views.js';
 import type { Runtime } from './runtime.js';
 
 type Phase =
@@ -17,9 +31,10 @@ type Phase =
   | { name: 'login-choice'; message: string }
   | { name: 'login-wait' }
   | { name: 'login-manual' }
-  | { name: 'prompt'; busy: boolean; error: string | null }
-  | { name: 'scan'; curator: ScUser; stats: ScanStats | null }
-  | { name: 'recap'; curator: ScUser; stats: ScanStats; candidates: Candidate[] }
+  | { name: 'mode' }
+  | { name: 'prompt'; mode: Mode; busy: boolean; error: string | null }
+  | { name: 'scan'; source: Source; stats: ScanStats | null }
+  | { name: 'recap'; source: Source; stats: ScanStats; candidates: Candidate[] }
   | { name: 'download'; stats: DownloadStats | null; label: string }
   | { name: 'done'; stats: DownloadStats | null; aborted: boolean }
   | { name: 'fatal'; error: string };
@@ -45,6 +60,8 @@ export function App({ runtime, onExit }: { runtime: Runtime; onExit: (code: numb
     setPhase({ name: 'fatal', error: err instanceof Error ? err.message : String(err) });
     finish(1);
   };
+  const chooseMode = () => setPhase({ name: 'mode' });
+  const prompt = (mode: Mode, error: string | null = null) => setPhase({ name: 'prompt', mode, busy: false, error });
 
   useInput((input, key) => {
     if (key.ctrl && input === 'c') {
@@ -65,7 +82,7 @@ export function App({ runtime, onExit }: { runtime: Runtime; onExit: (code: numb
         if (state === 'ready') {
           setSession(runtime.session?.permalink ?? null);
           setStatus(null);
-          setPhase({ name: 'prompt', busy: false, error: null });
+          chooseMode();
         } else {
           setPhase({ name: 'login-choice', message: 'No valid SoundCloud session stored.' });
         }
@@ -78,7 +95,7 @@ export function App({ runtime, onExit }: { runtime: Runtime; onExit: (code: numb
       setSession(me.permalink);
       setStatus(`connected as @${me.permalink}`);
     } else setStatus(skipped ? 'continuing without login' : 'login did not complete — continuing without login');
-    setPhase({ name: 'prompt', busy: false, error: null });
+    chooseMode();
   };
 
   const startLogin = async () => {
@@ -116,35 +133,38 @@ export function App({ runtime, onExit }: { runtime: Runtime; onExit: (code: numb
     }
   };
 
-  const submitUrl = async (raw: string) => {
-    const permalink = parseCuratorUrl(raw);
-    if (!permalink) return setPhase({ name: 'prompt', busy: false, error: `Not a SoundCloud profile URL (expected soundcloud.com/name): ${raw.trim()}` });
-    setPhase({ name: 'prompt', busy: true, error: null });
-    let curator: ScUser;
+  const submitUrl = async (mode: Mode, raw: string) => {
+    const permalink = parseProfileUrl(raw);
+    if (!permalink) return prompt(mode, `Not a SoundCloud profile URL (expected soundcloud.com/name): ${raw.trim()}`);
+    setPhase({ name: 'prompt', mode, busy: true, error: null });
+    let profile: ScUser;
     try {
-      curator = await runtime.resolveCurator(permalink);
+      profile = await runtime.resolveProfile(permalink);
     } catch (err) {
       if (isAbort(err) || runtime.signal.aborted) return finish(130);
       const msg = err instanceof ApiError && err.status === 404 ? `No SoundCloud profile at soundcloud.com/${permalink}` : `Could not resolve profile: ${(err as Error).message}`;
-      return setPhase({ name: 'prompt', busy: false, error: msg });
+      return prompt(mode, msg);
     }
+    const source: Source = { mode, profile };
     setStatus(null);
-    setPhase({ name: 'scan', curator, stats: null });
+    setPhase({ name: 'scan', source, stats: null });
     try {
-      const result = await runtime.scan(curator, (stats) => setPhase({ name: 'scan', curator, stats }));
-      setPhase({ name: 'recap', curator, stats: result.stats, candidates: result.candidates });
+      const result = await runtime.scan(source, (stats) => setPhase({ name: 'scan', source, stats }));
+      setPhase({ name: 'recap', source, stats: result.stats, candidates: result.candidates });
     } catch (err) {
+      // Only the listing itself throws (per-account or per-track errors are counted): let the user retry or change mode.
+      if (err instanceof ApiError && !runtime.signal.aborted) return prompt(mode, `Could not list the ${MODES[mode].unit} of @${profile.permalink}: ${err.message}`);
       fatal(err);
     }
   };
 
-  const startDownload = async (curator: ScUser, candidates: Candidate[], selection: Selection | 'quit') => {
+  const startDownload = async (source: Source, candidates: Candidate[], selection: Selection | 'quit') => {
     if (selection === 'quit') return finish(0);
     const items = pickSelection(candidates, selection);
     const label = `${LABELS[selection]} · ${items.length} tracks`;
     setPhase({ name: 'download', stats: null, label });
     try {
-      const stats = await runtime.download(curator, items, (live) => {
+      const stats = await runtime.download(source, items, (live) => {
         dlStats.current = live;
         setPhase({ name: 'download', stats: live, label });
       });
@@ -165,13 +185,16 @@ export function App({ runtime, onExit }: { runtime: Runtime; onExit: (code: numb
       <Static items={['banner']}>{(item) => <Banner key={item} />}</Static>
       <Status session={session} library={runtime.library?.dir ?? '…'} message={status} />
       {phase.name === 'boot' && <Text color={color.dim}>starting…</Text>}
-      {phase.name === 'login-choice' && <LoginChoice message={phase.message} onChoose={(login) => (login ? void startLogin() : setPhase({ name: 'prompt', busy: false, error: null }))} />}
+      {phase.name === 'login-choice' && <LoginChoice message={phase.message} onChoose={(login) => (login ? void startLogin() : chooseMode())} />}
       {phase.name === 'login-wait' && <LoginWait onSkip={() => loginAbort.current?.abort()} onManual={() => void startManualLogin()} />}
       {phase.name === 'login-manual' && <LoginManual onSkip={() => manualSkip.current?.()} />}
-      {phase.name === 'prompt' && <UrlPrompt busy={phase.busy} error={phase.error} onSubmit={(raw) => void submitUrl(raw)} />}
-      {phase.name === 'scan' && (phase.stats ? <ScanView stats={phase.stats} /> : <Text color={color.dim}>resolving followings…</Text>)}
+      {phase.name === 'mode' && <ModeChoice onChoose={(mode) => prompt(mode)} />}
+      {phase.name === 'prompt' && (
+        <UrlPrompt mode={phase.mode} busy={phase.busy} error={phase.error} onSubmit={(raw) => void submitUrl(phase.mode, raw)} onBack={chooseMode} />
+      )}
+      {phase.name === 'scan' && (phase.stats ? <ScanView stats={phase.stats} /> : <Text color={color.dim}>preparing…</Text>)}
       {phase.name === 'recap' && (
-        <RecapView stats={phase.stats} candidates={phase.candidates} loggedIn={session !== null} onChoose={(sel) => void startDownload(phase.curator, phase.candidates, sel)} />
+        <RecapView stats={phase.stats} candidates={phase.candidates} loggedIn={session !== null} onChoose={(sel) => void startDownload(phase.source, phase.candidates, sel)} />
       )}
       {phase.name === 'download' && (phase.stats ? <DownloadView stats={phase.stats} label={phase.label} /> : <Text color={color.dim}>preparing…</Text>)}
       {phase.name === 'done' && (phase.stats ? <Summary stats={phase.stats} library={runtime.library.dir} aborted={phase.aborted} /> : <Text color={color.warn}>stopped.</Text>)}

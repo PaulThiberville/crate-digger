@@ -10,6 +10,7 @@
  *   CRATE_CONFIG_DIR=/tmp/crate-mock/config CRATE_LIBRARY_DIR=/tmp/crate-mock/library npm start
  *
  * Curator URL to paste: soundcloud.com/curator — the fake sign-in page logs you in by itself after 2 s.
+ * Likes mode: soundcloud.com/curator (150 liked tracks + a few liked playlists) or soundcloud.com/mock-dj (40).
  * MOCK_DATADOME=1 makes /users/:id/tracks answer 403 like DataDome unless the call comes from a browser tab.
  */
 import http from 'node:http';
@@ -27,7 +28,7 @@ const FORMATS = ['wav', 'wav', 'aiff', 'flac', 'mp3', 'mp3', 'm4a', null];
 const MIME = { wav: 'audio/wav', aiff: 'audio/x-aiff', flac: 'audio/flac', mp3: 'audio/mpeg', m4a: 'audio/mp4' };
 
 const curator = { id: 1, kind: 'user', username: 'The Curator', permalink: 'curator', permalink_url: 'https://soundcloud.com/curator', followings_count: 5 };
-const me = { id: 999, kind: 'user', username: 'Mock DJ', permalink: 'mock-dj' };
+const me = { id: 999, kind: 'user', username: 'Mock DJ', permalink: 'mock-dj', permalink_url: 'https://soundcloud.com/mock-dj', followings_count: 0 };
 const followings = [];
 const tracksByUser = new Map();
 const tracks = new Map();
@@ -67,6 +68,21 @@ for (const [permalink, username, count] of [
     tracks.set(track.id, track);
   }
   tracksByUser.set(user.id, list);
+}
+
+// Likes: a sample of everybody's tracks (all kinds: eligible, private, long…) plus a few playlist likes in between.
+const likesByUser = new Map();
+for (const [user, count] of [
+  [curator, 150],
+  [me, 40],
+]) {
+  const pool = [...tracks.values()];
+  const picked = new Set();
+  while (picked.size < Math.min(count, pool.length)) picked.add(pool[Math.floor(rand() * pool.length)]);
+  const items = [...picked].map((track, i) => ({ created_at: new Date(Date.UTC(2025, 0, 1) - i * 86_400_000).toISOString(), kind: 'like', track }));
+  for (let i = 20; i < items.length; i += 20) items.splice(i, 0, { created_at: items[i - 1].created_at, kind: 'like', playlist: { id: 5000 + i, kind: 'playlist', title: `Playlist ${i}` } });
+  likesByUser.set(user.id, items);
+  user.likes_count = items.length;
 }
 
 const send = (res, status, type, body, extra = {}) => {
@@ -146,10 +162,14 @@ function api(req, res) {
   if (url.pathname === '/me') return auth ? json(res, 200, me) : json(res, 401, { error: 'unauthorized' });
   if (url.pathname === '/resolve') {
     const name = (url.searchParams.get('url') ?? '').split('/').filter(Boolean).pop();
-    const user = [curator, ...followings].find((u) => u.permalink === name);
+    const user = [curator, me, ...followings].find((u) => u.permalink === name);
     return user ? json(res, 200, user) : json(res, 404, {});
   }
   if ((m = /^\/users\/(\d+)\/followings$/.exec(url.pathname))) return json(res, 200, paginate(Number(m[1]) === curator.id ? followings : [], url));
+  if ((m = /^\/users\/(\d+)\/likes$/.exec(url.pathname))) {
+    if (DATADOME && !fromBrowser) return json(res, 403, { url: 'https://geo.captcha-delivery.com/captcha/?initialCid=mock' });
+    return json(res, 200, paginate(likesByUser.get(Number(m[1])) ?? [], url));
+  }
   if ((m = /^\/users\/(\d+)\/tracks$/.exec(url.pathname))) {
     if (DATADOME && !fromBrowser) return json(res, 403, { url: 'https://geo.captcha-delivery.com/captcha/?initialCid=mock' });
     return json(res, 200, paginate(tracksByUser.get(Number(m[1])) ?? [], url));
@@ -169,6 +189,6 @@ http.createServer(web).listen(PORT, '127.0.0.1');
 http.createServer(api).listen(PORT + 1, '127.0.0.1', () => {
   const all = [...tracks.values()];
   const eligible = all.filter((t) => t.downloadable && t.has_downloads_left && t.sharing === 'public' && t.duration <= 12 * 60_000);
-  console.log(`mock SoundCloud: web ${WEB} · api ${API} · curator soundcloud.com/curator`);
+  console.log(`mock SoundCloud: web ${WEB} · api ${API} · curator soundcloud.com/curator · likes soundcloud.com/curator, soundcloud.com/mock-dj`);
   console.log(`${all.length} tracks, ${eligible.length} eligible (${eligible.filter((t) => t._forbid).length} answer 403, ${eligible.filter((t) => !t._forbid && t.id % 41 === 0).length} fail on the CDN)${DATADOME ? ' · DataDome simulation ON' : ''}`);
 });

@@ -9,7 +9,9 @@ import { clearSession } from './core/auth.js';
 
 const USAGE = `${APP_NAME} v${VERSION} — official SoundCloud free downloads only
 
-  ${CMD}                       scan a curator's followings, then download
+  ${CMD}                       log in, pick a mode, scan a profile, then download
+                                followings tree uploads: every upload of the accounts a curator follows
+                                likes: every track a profile liked
   ${CMD} logout                forget the saved SoundCloud session
   ${CMD} --max-minutes <n>     skip tracks longer than n minutes (default ${DEFAULT_MAX_MINUTES})
   ${CMD} --help | --version
