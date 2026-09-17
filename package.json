@@ -1,6 +1,6 @@
 {
   "name": "crate-digger",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Crate Digger — SoundCloud official free downloads only, from a curator's followings graph or a profile's likes",
   "private": true,
   "type": "module",
